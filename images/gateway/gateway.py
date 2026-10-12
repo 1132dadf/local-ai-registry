@@ -20,12 +20,22 @@ ttft_ms, ms}. Tokens come from the engine's usage block when it sends one,
 otherwise one per streamed delta (estimated: true). The plugin reads the file
 for the tokens-per-day and decode-speed figures on the card.
 
+Connections: at most GATEWAY_MAX_CONNECTIONS (default 64) are served at once;
+one more is closed at once. Each request, its headers and body, must arrive
+within GATEWAY_REQUEST_DEADLINE seconds (default 10) of the gateway starting
+to wait for it, idle keep-alive included, or its connection is closed. Every
+write to a client must finish within GATEWAY_WRITE_DEADLINE seconds (default
+30). An answer without the key (/health, 401) closes its connection, so
+pipelined requests are never answered. So a client without the key holds a
+thread no longer than one request's deadline, however it sends or reads.
+
 Standard library only. No configuration beyond the environment above.
 """
 
 import http.client
 import json
 import os
+import socket
 import sys
 import threading
 import time
@@ -40,6 +50,9 @@ MODEL_ALIAS = os.environ.get("MODEL", "")  # served model id; client model names
 TIMEOUT = int(os.environ.get("UPSTREAM_TIMEOUT", "600"))
 USAGE_LOG = os.environ.get("GATEWAY_USAGE_LOG", "")
 USAGE_LOCK = threading.Lock()
+REQUEST_DEADLINE = float(os.environ.get("GATEWAY_REQUEST_DEADLINE", "10"))
+WRITE_DEADLINE = float(os.environ.get("GATEWAY_WRITE_DEADLINE", "30"))
+MAX_CONNECTIONS = int(os.environ.get("GATEWAY_MAX_CONNECTIONS", "64"))
 
 
 def log(msg):
@@ -496,9 +509,32 @@ def finish_text(event, text_item, output):
 class Handler(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
     server_version = "omarchy-local-ai-gateway/1"
+    timeout = WRITE_DEADLINE  # each socket operation; a client that stops reading cannot block a write for longer
 
     def log_message(self, fmt, *args):  # quiet by default; errors go through log()
         pass
+
+    # Every request gets REQUEST_DEADLINE from when the gateway starts waiting for it until its headers, and its body
+    # when it has one, are in; past that the connection is shut, so a slow sender frees its thread whatever the key.
+    def handle_one_request(self):
+        self.deadline = threading.Timer(REQUEST_DEADLINE, self.expire)
+        self.deadline.daemon = True
+        self.deadline.start()
+        try:
+            super().handle_one_request()
+        finally:
+            self.deadline.cancel()
+
+    def expire(self):
+        self.close_connection = True
+        try:
+            self.connection.shutdown(socket.SHUT_RDWR)
+        except OSError:
+            pass
+
+    def refuse(self):
+        self.close_connection = True  # an unread body must not be taken for the next request
+        self.send_json(401, {"error": {"type": "authentication_error", "message": "invalid or missing API key"}})
 
     def send_json(self, status, payload):
         body = json.dumps(payload).encode()
@@ -526,11 +562,13 @@ class Handler(BaseHTTPRequestHandler):
     def read_body(self):
         length = int(self.headers.get("Content-Length") or 0)
         raw = self.rfile.read(length) if length else b""
+        self.deadline.cancel()
         return json.loads(raw) if raw else {}
 
     def do_GET(self):
         path = urllib.parse.urlparse(self.path).path
         if path == "/health":
+            self.close_connection = True  # no key: one answer, then the connection is closed
             try:
                 up = Upstream("GET", "/v1/models")
                 up.raw()
@@ -539,7 +577,8 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_json(503, {"status": f"engine unavailable: {error}"})
             return
         if not self.authorized():
-            return self.send_json(401, {"error": {"type": "authentication_error", "message": "invalid or missing API key"}})
+            return self.refuse()
+        self.deadline.cancel()
         if path in ("/v1/models", "/models"):
             return self.passthrough("GET", "/v1/models", None)
         self.send_json(404, {"error": {"type": "not_found", "message": path}})
@@ -547,7 +586,7 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self):
         path = urllib.parse.urlparse(self.path).path
         if not self.authorized():
-            return self.send_json(401, {"error": {"type": "authentication_error", "message": "invalid or missing API key"}})
+            return self.refuse()
         try:
             body = self.read_body()
         except json.JSONDecodeError:
@@ -673,9 +712,37 @@ class Handler(BaseHTTPRequestHandler):
         self.send_json(200, chat_to_responses(resp, model, body))
 
 
+class Server(ThreadingHTTPServer):
+    """A thread per connection, at most MAX_CONNECTIONS at once; one more is closed without a thread."""
+    daemon_threads = True
+
+    def __init__(self, address, handler):
+        super().__init__(address, handler)
+        self.slots = threading.BoundedSemaphore(MAX_CONNECTIONS)
+
+    def process_request(self, request, client_address):
+        if not self.slots.acquire(blocking=False):
+            self.shutdown_request(request)
+            return
+        try:
+            super().process_request(request, client_address)
+        except BaseException:
+            self.slots.release()
+            raise
+
+    def process_request_thread(self, request, client_address):
+        try:
+            super().process_request_thread(request, client_address)
+        finally:
+            self.slots.release()
+
+    def handle_error(self, request, client_address):
+        if not isinstance(sys.exc_info()[1], OSError):  # a connection shut at its deadline or by its client
+            super().handle_error(request, client_address)
+
+
 def main():
-    server = ThreadingHTTPServer(("0.0.0.0", PORT), Handler)
-    server.daemon_threads = True
+    server = Server(("0.0.0.0", PORT), Handler)
     log(f"gateway listening on :{PORT}, engine {UPSTREAM}, key {'required' if required_key() else 'not set'}, usage log {USAGE_LOG or 'off'}")
     try:
         server.serve_forever()

@@ -9,7 +9,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import lab
 
 ROOT = lab.ROOT
-GATEWAY = "ghcr.io/sybil-solutions/gateway@sha256:1f8249a5af07981b7eb37f1af02d2377c30a151918840646c202b16627e02d5a"
+GATEWAY = "ghcr.io/sybil-solutions/gateway@sha256:3377c098f3a75be68e2b701bab997df27df17b60388cb715b1750d20c43fc0f5"
 MIN_DRIVER = {"tabbyapi": "575.0", "sglang": "580.0", "vllm": "580.0", "llama.cpp": "535.0"}
 
 
@@ -80,6 +80,17 @@ def derived(key, r, meta, p, L, caps):
             **({"needs": L["needs"]} if L.get("needs") else {})}
 
 
+def aa(r, meta):
+    """The model's Artificial Analysis Intelligence Index (registry/models.json, lab/aa.py), a build of another model
+    taking its base's: {"aa": 41.8}, or nothing when AA does not list it."""
+    models = meta.get("models") or {}
+    m, seen = models.get(r.get("model")) or {}, 0
+    while "of" in (m.get("aa") or {}) and seen < 4:
+        m, seen = models.get(m["aa"]["of"]) or {}, seen + 1
+    i = (m.get("aa") or {}).get("index")
+    return {"aa": i} if isinstance(i, (int, float)) else {}
+
+
 def mounts_ok(e):
     """The plugin's own rules: an id it accepts (a-z, 0-9, dots and dashes, at most 64), and no input mounted at, or
     above, where a prepared pack is mounted."""
@@ -104,7 +115,8 @@ def eligible(r, version):
     L = r["launch"]
     # a recipe its publisher reported (not yet run by the lab) is exported too, flagged `reported`, so the plugin can
     # say so; one withdrawn is not
-    if any(L.get(x) for x in ("kind", "flags", "machines", "build")) or r["proof"][0].get("withdrawn"):
+    # a launch with a companion (a second container on a card of another kind) is a candidate until a plugin runs it
+    if any(L.get(x) for x in ("kind", "flags", "machines", "build", "companion")) or r["proof"][0].get("withdrawn"):
         return False
     if not describable(r):
         return False
@@ -152,7 +164,8 @@ def build(version=2):
         # the plugin refuses a whole catalog for one recipe it cannot take, so none such leaves here
         ok = [k for k in ok if mounts_ok(entry(k, cat["recipes"][k], meta))]
         if ok:
-            hw[card] = {"match": c["match"], "recipes": [dict(entry(k, cat["recipes"][k], meta), **({"reported": True} if cat["recipes"][k]["proof"][0].get("reported") else {})) for k in ok]}
+            hw[card] = {"match": c["match"], "recipes": [dict(entry(k, cat["recipes"][k], meta), **({"reported": True} if cat["recipes"][k]["proof"][0].get("reported") else {}),
+                                                              **aa(cat["recipes"][k], meta)) for k in ok]}
             for e in hw[card]["recipes"]:  # a needs block reaches the plugin only in the checked shape
                 if "resources" in e:
                     e["launch"]["resources"] = e.pop("resources")
