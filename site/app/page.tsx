@@ -1,94 +1,52 @@
 import type { Metadata } from "next";
-import Link from "next/link";
 import Copy from "@/components/Copy";
-import HowAnim from "@/components/HowAnim";
+import Dots from "@/components/Dots";
+import Find, { type Item } from "@/components/Find";
+import Seen from "@/components/Seen";
+import { PLUGIN, REGISTRY, SiteFoot, SiteNav } from "@/components/SiteNav";
 import copy from "@/lib/landing/copy.json";
-import logos from "@/lib/landing/logos.json";
-import { stats } from "@/lib/registry";
+import { GPU, NET, TERMINAL } from "@/lib/landing/pictures";
+import { cards, models, recipes, short } from "@/lib/registry";
 import s from "./landing.module.css";
 
-// The landing page. Every word comes from lib/landing/copy.json, the text written in the brand page's form;
-// the links are fixed here.
-const X = "https://x.com/0xSero";
-const PLUGIN = "https://github.com/sybil-solutions/omarchy-local-ai";
+// The landing page: the promise, the hands, three dot pictures saying what it is, then every GPU and model, searchable.
+// Every word comes from lib/landing/copy.json; the details live in /docs/ and the videos in /videos/.
 const INSTALL = `omarchy plugin add ${PLUGIN} --enable`;
-const REGISTRY = "https://github.com/sybil-solutions/local-ai-registry";
-const NAV: Record<string, string> = { models: "/models/", hardware: "/hardware/", videos: "#videos", "how it works": "#how", contribute: "#contribute", github: PLUGIN, docs: "/docs/", api: "/docs/#api" };
-const GROUP_LINK: Record<string, string> = { gpuLogos: "/hardware/", modLogos: "/models/" };
 
-type Logo = { name: string; wordmark: boolean; body: string };
-const LOGOS = logos as Record<string, Logo>;
+// The cards people most often run models on at home, first; every other card follows by how many recipes it has.
+const COMMON = ["rtx-3090-24gb", "rtx-4090-24gb", "rtx-5090-32gb", "rtx-3060-12gb", "rtx-4060-ti-16gb", "rtx-5070-12gb", "rtx-4070-super-12gb", "rtx-5060-ti-16gb",
+  "rtx-4080-super-16gb", "rtx-5080-16gb", "rx-7900-xtx-24gb", "rtx-4060-8gb", "rtx-3080-10gb", "rtx-3070-8gb", "dgx-spark-gb10-128gb", "apple-m4-max-128gb", "x86-64-avx2-cpu"];
 
 export const metadata: Metadata = {
   title: { absolute: `${copy.word}: ${copy.sHead}` },
   description: copy.sSub ?? undefined,
 };
 
-const list = (v: string | null) => String(v ?? "").split(",").map((x) => x.trim()).filter(Boolean);
+const count = (n: number, one: string) => `${n} ${one}${n === 1 ? "" : "s"}`;
 
-function XIcon() {
-  return (
-    <svg viewBox="0 0 24 24" width="1em" height="1em" aria-hidden="true" className={s.xicon}>
-      <path fill="currentColor" d="M18.24 2.25h3.31l-7.23 8.26 8.5 11.24h-6.66l-5.21-6.82-5.97 6.82H1.67l7.73-8.84L1.25 2.25h6.83l4.71 6.23 5.45-6.23Zm-1.16 17.52h1.83L7.08 4.13H5.12l11.96 15.64Z" />
-    </svg>
-  );
+function gpuItems(): Item[] {
+  const n = (id: string) => recipes.filter((r) => r.card === id).length;
+  const rank = (id: string) => (COMMON.includes(id) ? COMMON.indexOf(id) : COMMON.length);
+  return [...cards]
+    .sort((a, b) => rank(a.id) - rank(b.id) || n(b.id) - n(a.id) || a.name.localeCompare(b.name))
+    .map((c) => ({ name: short(c.name), meta: `${c.vendor === "cpu" ? "RAM" : `${c.vram_gb} GB`} · ${count(n(c.id), "recipe")}`, href: `/gpu/${c.id}/`, terms: `${c.name} ${c.id} ${c.vendor} ${c.vram_gb}gb`.toLowerCase() }));
 }
 
-function Play() {
-  return (
-    <span className={s.play} aria-hidden="true">
-      <svg viewBox="0 0 24 24"><path d="M7 4.5v15l13-7.5z" /></svg>
-    </span>
-  );
-}
-
-function BrandLogo({ k }: { k: string }) {
-  const L = LOGOS[k];
-  if (!L) return null;
-  // The Intel and AMD glyphs are wordmarks with empty space above and below, so they are drawn larger and show no name.
-  const scale = L.wordmark ? (k === "amd" ? 3.6 : 2.4) : 1;
-  return (
-    <span className={s.logo} title={L.name}>
-      <svg viewBox="0 0 24 24" fill="currentColor" fillRule="evenodd" style={{ height: `${scale}em`, margin: `${-(scale - 1) / 2}em 0` }} dangerouslySetInnerHTML={{ __html: L.body }} />
-      {!L.wordmark && <span>{L.name}</span>}
-    </span>
-  );
-}
-
-function Thumb({ title, meta, href, img }: { title?: string | null; meta?: string | null; href: string; img?: string | null }) {
-  return (
-    <a href={href} className={s.thumb} target="_blank" rel="noreferrer">
-      <span className={s.frame}>
-        {img ? <img src={`/landing/videos/${img}.jpg`} alt="" className={s.poster} loading="lazy" /> : <img src="/landing/hands.svg" alt="" />}
-        <Play />
-        {meta && <span className={s.meta}>{meta}</span>}
-      </span>
-      {title && <span className={s.thumbTitle}>{title}</span>}
-    </a>
-  );
+function modelItems(): Item[] {
+  return Object.entries(models)
+    .map(([id, m]) => ({ id, m, n: new Set(recipes.filter((r) => r.model === id).map((r) => r.card)).size }))
+    .filter((x) => x.n)
+    .sort((a, b) => b.n - a.n || a.m.name.localeCompare(b.m.name))
+    .map(({ id, m, n }) => ({ name: m.name, meta: count(n, "GPU"), href: `/models/#${id}`, terms: `${m.name} ${id} ${m.family}`.toLowerCase() }));
 }
 
 export default function Landing() {
-  const groups = ([["gpuTitle", "gpuLogos"], ["harTitle", "harLogos"], ["modTitle", "modLogos"]] as const)
-    .map(([t, l]) => ({ title: copy[t], keys: list(copy[l]).filter((k) => LOGOS[k]), href: GROUP_LINK[l] }))
-    .filter((g) => g.keys.length);
   const C = copy as Record<string, string | null>;
-  const steps = [1, 2, 3, 4, 5, 6].map((i) => [C[`s${i}t`], C[`s${i}d`]]).filter(([t]) => t);
-  const videos = [1, 2, 3, 4, 5, 6].map((i) => ({ title: C[`v${i}t`], meta: C[`v${i}m`], href: C[`v${i}u`] ?? X, img: C[`v${i}i`] })).filter((v) => v.title);
-  const ways = [1, 2, 3].map((i) => ({ t: C[`c${i}t`], d: C[`c${i}d`], l: C[`c${i}l`], u: C[`c${i}u`] })).filter((w) => w.t);
+  const what = [GPU, NET, TERMINAL].map((art, i) => ({ art, t: C[`w${i + 1}t`], d: C[`w${i + 1}d`] }));
 
   return (
     <div className={s.page}>
-      <header className={s.nav}>
-        <Link href="/" className={s.word}>{copy.word}</Link>
-        <nav>
-          {list(copy.sNav).map((label) => {
-            const href = NAV[label.toLowerCase()] ?? "#";
-            return href.startsWith("http") ? <a key={label} href={href}>{label}</a> : <Link key={label} href={href}>{label}</Link>;
-          })}
-          {copy.sFollow && <a href={X} className={s.btn}><XIcon />{copy.sFollow}</a>}
-        </nav>
-      </header>
+      <SiteNav />
 
       <section className={s.hero}>
         <h1>{copy.sHead}</h1>
@@ -105,52 +63,32 @@ export default function Landing() {
         {copy.credit && <span className={s.credit}>{copy.credit}</span>}
       </div>
 
-      <section className={s.supported}>
-        {copy.supLabel && <div className={s.supHead}><span className={s.label}>{copy.supLabel}</span></div>}
-        <div className={s.supBar}>
-          {groups.map((g) => (
-            <div key={g.title ?? g.keys[0]} className={s.group}>
-              {g.href ? <Link href={g.href} className={s.groupTitle}>{g.title}</Link> : <span className={s.groupTitle}>{g.title}</span>}
-              {g.keys.map((k) => <BrandLogo key={k} k={k} />)}
+      <section id="what" className={s.section}>
+        <div className={s.flow}>
+          {what.map((w, i) => (
+            <div key={i} className={s.flowItem}>
+              <div className={s.pic}><Dots art={w.art} label={w.t ?? undefined} /></div>
+              {i < what.length - 1 && <span className={s.wire} aria-hidden="true"><i /></span>}
+              <h3>{w.t}</h3>{w.d && <p>{w.d}</p>}
             </div>
           ))}
         </div>
       </section>
 
-      <section id="videos" className={s.section}>
-        <div className={s.head}><span className={s.label}>{copy.sWatch}</span><a href={X} className={s.more}>{copy.sWatchLink}</a></div>
-        <div className={s.videos}>{videos.map((v) => <Thumb key={v.href} {...v} />)}</div>
+      <section id="find" className={`${s.section} ${s.finds}`}>
+        <Find title={C.fGpus ?? "GPUs"} placeholder={C.fGpusQ ?? ""} items={gpuItems()} all={{ label: C.fGpusAll ?? "", href: "/hardware/" }} />
+        <Find title={C.fModels ?? "Models"} placeholder={C.fModelsQ ?? ""} items={modelItems()} all={{ label: C.fModelsAll ?? "", href: "/models/" }} />
       </section>
 
-      <section id="how" className={s.section}>
-        <div className={s.head}><span className={s.label}>{copy.sHow}</span>
-          <Link href="/hardware/" className={s.more}>{stats.gpus} GPUs with recipes · {stats.recipes} recipes · {stats.tested} tested on the card</Link></div>
-        <div className={s.steps}>
-          {steps.map(([t, d], i) => (
-            <div key={i} className={s.step}><HowAnim step={i} /><span className={s.num}>0{i + 1}</span><h3>{t}</h3><p>{d}</p></div>
-          ))}
-        </div>
-      </section>
-
-      {C.cHead && (
-        <section id="contribute" className={s.section}>
-          <div className={s.head}><span className={s.label}>{C.cHead}</span><a href={REGISTRY} className={s.more}>{C.cBtn} →</a></div>
-          {C.cText && <p className={s.lede}>{C.cText}</p>}
-          <div className={s.ways}>
-            {ways.map((w) => (
-              <a key={w.t} href={w.u ?? REGISTRY} className={s.way}><h3>{w.t}</h3><p>{w.d}</p>{w.l && <span>{w.l}</span>}</a>
-            ))}
-          </div>
+      {C.cText && (
+        <section id="contribute" className={`${s.section} ${s.follow}`}>
+          <p>{C.cText}</p>
+          <a href={C.cUrl ?? REGISTRY} className={s.btn}>{C.cBtn} →</a>
         </section>
       )}
 
-      <section className={`${s.section} ${s.follow}`}>
-        <span className={s.label}>{copy.sXHead}</span>
-        {copy.sXText && <p>{copy.sXText}</p>}
-        <a href={X} className={s.btn}><XIcon />{copy.sXBtn}</a>
-      </section>
-
-      <footer className={s.foot}><a href={X}>{copy.sFooter}</a></footer>
+      <SiteFoot />
+      <Seen />
     </div>
   );
 }
