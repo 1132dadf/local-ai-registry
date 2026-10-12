@@ -55,7 +55,9 @@ def pin(p):
     if p.get("kind") != "host":
         return p["image"].split("@sha256:")[1]
     keys = ("command", "install", "pip", "env", "port", "weights", "ctx", "seqs", "vision", "wired_limit_reserve_mb")
-    return hashlib.sha256(json.dumps({**{k: p.get(k) for k in keys}, "config": config_text(p)}, sort_keys=True).encode()).hexdigest()
+    # several cards (or machines) count too, but one is the default and stays out, so every single-card pin is unchanged
+    topology = {k: p[k] for k in ("cards", "machines") if p.get(k, 1) != 1}
+    return hashlib.sha256(json.dumps({**{k: p.get(k) for k in keys}, **topology, "config": config_text(p)}, sort_keys=True).encode()).hexdigest()
 
 
 def profile_file(name):
@@ -105,8 +107,9 @@ def render(recipe):
         if p.get("kind") == "host":  # a program on the host, not a container
             out = {"kind": "host", "command": p["command"], "install": p.get("install"), "port": p["port"], "image": None,
                    "weights": p.get("weights") or [], "config": None, "ctx": p["ctx"], "seqs": p.get("seqs", 1),
-                   "vision": p.get("vision", False), "backend": p.get("backend"), "cards": 1,
-                   "env": p.get("env") or {}, **{k: p[k] for k in ("setup", "source", "needs") if k in p}}
+                   "vision": p.get("vision", False), "backend": p.get("backend"), "cards": p.get("cards", 1),
+                   "env": p.get("env") or {}, **{k: p[k] for k in ("setup", "source", "needs") if k in p},
+                   **({"machines": p["machines"]} if p.get("machines", 1) != 1 else {})}  # one machine is the default and stays out
             # MLX on Apple silicon: pinned packages, a launcher file, its environment, and a GPU wired-memory limit that
             # follows the card's unified memory
             out.update({k: p[k] for k in ("pip",) if p.get(k)})
@@ -117,7 +120,7 @@ def render(recipe):
                 out["sysctl"] = {"iogpu.wired_limit_mb": card(recipe["card"])["vram_gb"] * 1024 - p["wired_limit_reserve_mb"]}
             return out
         return {"image": p["image"], "entrypoint": p.get("entrypoint"), "args": p["args"], "port": p["port"], "shm": p.get("shm"),
-                **{k: p[k] for k in ("flags", "machines", "build", "setup", "source", "needs", "prepare", "resources") if k in p},
+                **{k: p[k] for k in ("flags", "machines", "build", "setup", "source", "needs", "prepare", "resources", "companion") if k in p},
                 "env": p.get("env") or {}, "weights": p["weights"],
                 "config": {**cfg, "sha256": hashlib.sha256(cfg["text"].encode()).hexdigest()} if cfg else None,
                 "ctx": p["ctx"], "seqs": p.get("seqs", 1), "vision": p.get("vision", False), "backend": p.get("backend"), "cards": p.get("cards", 1)}
@@ -169,6 +172,30 @@ def check_execution(launch):
     weights = launch["weights"] if isinstance(launch["weights"], list) else [launch["weights"]]
     for w in weights:
         assert w["at"] != p["at"] and not p["at"].startswith(w["at"].rstrip("/") + "/"), "input mount masks prepared output"
+
+
+COMPANION = {"hw", "cards", "image", "entrypoint", "environment", "arguments", "resources", "shm"}
+SHARED_DIR = "/run/local-ai/shared"
+
+
+def check_companion(c):
+    """`companion`: a second container on a card of another kind in the same machine, started before the engine (e.g. a
+    B70 expert server next to an RTX 3090 engine). It gets the engine's read-only weights and pack mounts and a tmpfs dir
+    shared with the engine at SHARED_DIR; the recipe never names host paths. No plugin runs these yet: the exporter keeps
+    launches with a companion out of the plugin catalog (candidates)."""
+    assert isinstance(c, dict) and set(c) <= COMPANION and {"hw", "cards", "image"} <= set(c), f"companion keys {sorted(c)}"
+    card(c["hw"])  # a known card id
+    assert type(c["cards"]) is int and 1 <= c["cards"] <= 8, "companion.cards"
+    assert isinstance(c["image"], str) and "@sha256:" in c["image"], "companion image must be pinned by digest"
+    sub = {"env": c.get("environment", {}), "args": c.get("arguments", []), "resources": c.get("resources", {})}
+    if c.get("entrypoint") is not None:
+        assert isinstance(c["entrypoint"], str) and "\0" not in c["entrypoint"], "companion.entrypoint"
+    if c.get("shm") is not None:
+        assert isinstance(c["shm"], str) and re.fullmatch(r"\d+[kmg]", c["shm"]), "companion.shm"
+    check_execution(sub)
+    for v in list(sub["env"].values()) + sub["args"]:
+        if v.startswith("/") and not re.match(r"/(models|nvx|prepared|run/local-ai/shared)(/|$)", v):
+            raise AssertionError(f"companion names a host-looking path {v!r}; use the shared dir {SHARED_DIR}")
 
 
 def call(endpoint, path, body=None, timeout=3600):  # a 128k prompt on a small card takes a while; never cut an answer short
@@ -508,18 +535,20 @@ def cmd_render(args):
     return 0
 
 
-NEEDS = {"host_ram_gb": (int, float), "disk_gb": (int, float), "fast_storage": str}
+NEEDS = {"host_ram_gb": (int, float), "disk_gb": (int, float), "fast_storage": str, "cpus": int}
 
 
 def check_needs(n):
     """`needs`: what the host must have besides the card, for launches that keep weights in system RAM or read them
     from disk while serving. host_ram_gb = free system RAM the server takes (measured peak), disk_gb = space for the
-    weights, fast_storage = "nvme" when the weights directory must be on a local NVMe SSD (random reads at runtime)."""
+    weights, fast_storage = "nvme" when the weights directory must be on a local NVMe SSD (random reads at runtime), cpus = the
+    CPU threads the engine pins work to (plugin >= 6.11 says the machine is too small below that)."""
     assert isinstance(n, dict) and set(n) <= set(NEEDS) and {"host_ram_gb", "disk_gb"} <= set(n), f"needs keys {sorted(n)}"
     for k, v in n.items():
         assert isinstance(v, NEEDS[k]) and not isinstance(v, bool), f"needs.{k} is {type(v).__name__}"
     assert n["host_ram_gb"] > 0 and n["disk_gb"] > 0, "needs sizes must be positive"
     assert n.get("fast_storage", "nvme") == "nvme", "needs.fast_storage is nvme or absent"
+    assert n.get("cpus", 1) > 0, "needs.cpus counts CPU threads the engine pins work to"
 
 
 def cmd_check(_):
@@ -534,12 +563,18 @@ def cmd_check(_):
             assert f.parent.name == r["card"] and f.parent.parent.name == c["vendor"], "path is not recipes/<vendor>/<card>/"
             launch = render(r)
             assert f == recipe_path(r, launch), f"file name should be {recipe_path(r, launch).name}"
+            if launch.get("kind") == "host":  # the SDK's host steps start one program on one machine
+                assert type(launch["cards"]) is int and launch["cards"] >= 1, "host cards must be a whole number of cards"
+                assert launch.get("machines", 1) == 1, "multi-machine host launches are not supported by the current SDK; use a container launch"
             if "needs" in launch:
                 check_needs(launch["needs"])
+            if "companion" in launch:
+                check_companion(launch["companion"])
             p = r["proof"][0]
             if launch.get("resources") or "verifyArgs" in (launch.get("prepare") or {}):
                 check_execution(launch)
-                if not p.get("withdrawn"):
+                # a reported proof is its publisher's run, not an acceptance: there is no lab hash to bind
+                if not p.get("withdrawn") and not p.get("reported"):
                     assert p.get("launch_sha256") == launch_hash(launch), "typed launch changed since acceptance; rerun the recipe"
             if "withdrawn" in p:
                 assert p["withdrawn"] is True and p.get("src") and p.get("reason"), "withdrawal needs source and reason"
