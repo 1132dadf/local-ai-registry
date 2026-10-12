@@ -9,7 +9,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import lab
 
 ROOT = lab.ROOT
-GATEWAY = "ghcr.io/sybil-solutions/gateway@sha256:1f8249a5af07981b7eb37f1af02d2377c30a151918840646c202b16627e02d5a"
+GATEWAY = "ghcr.io/sybil-solutions/gateway@sha256:3377c098f3a75be68e2b701bab997df27df17b60388cb715b1750d20c43fc0f5"
 MIN_DRIVER = {"tabbyapi": "575.0", "sglang": "580.0", "vllm": "580.0", "llama.cpp": "535.0"}
 
 
@@ -115,7 +115,8 @@ def eligible(r, version):
     L = r["launch"]
     # a recipe its publisher reported (not yet run by the lab) is exported too, flagged `reported`, so the plugin can
     # say so; one withdrawn is not
-    if any(L.get(x) for x in ("kind", "flags", "machines", "build")) or r["proof"][0].get("withdrawn"):
+    # a launch with a companion (a second container on a card of another kind) is a candidate until a plugin runs it
+    if any(L.get(x) for x in ("kind", "flags", "machines", "build", "companion")) or r["proof"][0].get("withdrawn"):
         return False
     if not describable(r):
         return False
