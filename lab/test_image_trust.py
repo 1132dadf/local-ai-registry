@@ -80,6 +80,20 @@ class ImageTrustTest(unittest.TestCase):
         for ref in ["refs/heads/main", "refs/heads/feature", "refs/tags/b11146-evil", "refs/tags/v1", "refs/heads/master/x"]:
             self.assertFalse(identity.search(base + ref), ref)
 
+    def test_official_vllm_rocm_is_approved_by_image_name(self):
+        # images() strips the tag before verify(). A tag left on is not its own approval.
+        run = Mock(side_effect=AssertionError("network accessed"))
+        verify("vllm/vllm-openai-rocm@sha256:" + "a" * 64, run)
+        run.assert_not_called()
+        for image in (
+            "vllm/vllm-openai-rocm:v0.31.0@sha256:" + "a" * 64,
+            "vllm/vllm-openai-rocm:v0.31.0-base@sha256:" + "a" * 64,
+            "vllm/vllm-openai-rocm:latest",
+            "vllm/vllm-openai-rocm:latest-base",
+        ):
+            with self.subTest(image=image), self.assertRaises(ValueError):
+                verify(image, run)
+
     def test_unapproved_or_mutable_images_fail_before_network(self):
         for image in ["ghcr.io/0xsero/gateway:latest", "evil/gateway@sha256:" + "a" * 64]:
             with self.subTest(image=image), self.assertRaises(ValueError):

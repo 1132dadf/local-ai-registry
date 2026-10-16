@@ -20,6 +20,13 @@ BUILDERS.update({f"ghcr.io/sybil-solutions/{name}":
     for name in ("deepseek-v4.1-flash-spark", "dsv41-flash-offload", "exl3xpu", "gateway",
                  "glm53-b70-expert-server", "glm53-flash-offload", "llamacpp-bonsai", "sglang-exl3", "sglang-exl3-flashnext", "sglang-exl3-flashnext-multiarch",
                  "sglang-exl3-xpu-flashnext", "tabbyapi-exl3")})
+# Official Docker Hub images with no GitHub Actions provenance. vLLM pushes
+# vllm/vllm-openai-rocm from Buildkite, and gh attestation verify returns 404.
+# Approval is the image name. The tag is stripped before this check, and a
+# digest pin is still required. https://github.com/sybil-solutions/local-ai-registry/issues/297
+OFFICIAL = {
+    "vllm/vllm-openai-rocm",
+}
 PATHS = ["registry/engines", "registry/launches", "plugin/v2/recipes.json", "plugin/v3/recipes.json"]
 
 
@@ -47,8 +54,10 @@ def images(ref):
 
 def verify(image, run=subprocess.run):
     match = re.fullmatch(r"([^@]+)@sha256:[0-9a-f]{64}", image)
-    if not match or match[1] not in BUILDERS:
+    if not match or (match[1] not in BUILDERS and match[1] not in OFFICIAL):
         raise ValueError(f"No approved pinned builder for {image}; publish through an approved workflow")
+    if match[1] in OFFICIAL:
+        return
     repo, workflow, ref = BUILDERS[match[1]]
     identity = f"^https://github.com/{re.escape(repo)}/\\.github/workflows/{re.escape(workflow)}@{ref}$"
     run(["gh", "attestation", "verify", "oci://" + image, "--repo", repo,

@@ -7,6 +7,11 @@ approved repository, workflow and default branch in `lab/image_trust.py`.
 Verification failures, missing attestations and timeouts fail the required
 `verify` check. New publishers require a reviewed policy change. Rebuild
 third-party images through an approved workflow before adding their digests.
+`vllm/vllm-openai-rocm` is the exception: vLLM publishes it to Docker Hub from
+Buildkite, and those digests have no GitHub Actions attestation. The image name
+is approved. A tag is not. New references must still be `name@sha256:<digest>`
+(the tag in `name:tag@sha256:…` is ignored). `v0.31.0` is the server image and
+`v0.31.0-base` is the build base. They are different digests of that same name.
 
 This gate establishes build identity, not that the source is harmless. Review
 Dockerfiles, dependencies, runtime downloads, mounts, devices, capabilities,
