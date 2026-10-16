@@ -23,7 +23,6 @@
   "intel/intel-arc-pro-b65-32gb/muse-glimmer-30b.llama.cpp.64k.json",
   "intel/intel-arc-pro-b65-32gb/qwen3.8-27b.llama.cpp.32k.json",
   "intel/intel-arc-pro-b65-32gb/qwen3.8-27b.llama.cpp.64k.json",
-  "intel/intel-arc-pro-b70-32gb/qwen3.6-35b-a3b.sglang.8k.2x.json",
   "nvidia/rtx-2000-ada-16gb/gemma-4-26b-a4b.tabbyapi.32k.json",
   "nvidia/rtx-2080-ti-22gb/qwen3.8-27b.llama.cpp.32k.json",
   "nvidia/rtx-3060-12gb/gemma-4-12b.tabbyapi.64k.json",
