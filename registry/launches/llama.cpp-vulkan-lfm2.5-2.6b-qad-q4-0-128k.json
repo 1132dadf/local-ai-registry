@@ -1,0 +1,47 @@
+{
+  "id": "llama.cpp-vulkan-lfm2.5-2.6b-qad-q4-0-128k",
+  "engine": "llama.cpp",
+  "about": "LFM2.5-2.6B (GGUF, QAD-Q4_0) on Vulkan at 128K; fast 2.6B hybrid candidate for Radeon 890M",
+  "image": "ghcr.io/ggml-org/llama.cpp@sha256:1086b8815273e566bc0f549bac1d6d2dc469e6409a952cca3f502e53d72877e7",
+  "backend": "amd-vulkan",
+  "port": 8080,
+  "entrypoint": null,
+  "args": [
+    "-m", "/models/LFM2.5-2.6B-QAD-Q4_0.gguf",
+    "--alias", "LFM2.5-2.6B-GGUF",
+    "--host", "0.0.0.0",
+    "--port", "8080",
+    "--ctx-size", "131072",
+    "--n-gpu-layers", "999",
+    "-b", "512",
+    "-ub", "128",
+    "-t", "4",
+    "--parallel", "1",
+    "--cont-batching",
+    "--poll", "0",
+    "--flash-attn", "on",
+    "--jinja",
+    "--reasoning-format", "deepseek",
+    "--metrics"
+  ],
+  "env": {},
+  "shm": "4g",
+  "weights": [
+    {
+      "repo": "LiquidAI/LFM2.5-2.6B-GGUF",
+      "revision": "84022ce711b28455e8c4fc364ce68c00cf995875",
+      "at": "/models",
+      "layout": "dir",
+      "files": ["LFM2.5-2.6B-QAD-Q4_0.gguf"]
+    }
+  ],
+  "config": null,
+  "ctx": 131072,
+  "seqs": 1,
+  "vision": false,
+  "cards": 1,
+  "needs": {
+    "host_ram_gb": 8,
+    "disk_gb": 4
+  }
+}
