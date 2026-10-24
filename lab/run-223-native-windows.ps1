@@ -67,11 +67,11 @@ $monitor = Start-Job -ArgumentList $memwatch -ScriptBlock {
 $serverOut = Join-Path $ev "llama-server.stdout.log"
 $serverErr = Join-Path $ev "llama-server.stderr.log"
 $q = [string][char]34
-$args = @("-m", "$q$modelPath$q", "--host", "127.0.0.1", "--port", "8080", "--ctx-size", "131072", "--n-gpu-layers", "999", "-b", "512", "-ub", "512", "-t", "4", "--parallel", "1", "--cont-batching", "--poll", "0", "--flash-attn", "on", "--kv-unified", "--cache-type-k", "q4_0", "--cache-type-v", "q4_0", "--jinja", "--reasoning-format", "deepseek", "--metrics", "--device", $deviceId) -join " "
+$serverArgsLine = @("-m", "$q$modelPath$q", "--host", "127.0.0.1", "--port", "8080", "--ctx-size", "131072", "--n-gpu-layers", "999", "-b", "512", "-ub", "512", "-t", "4", "--parallel", "1", "--cont-batching", "--poll", "0", "--flash-attn", "on", "--kv-unified", "--cache-type-k", "q4_0", "--cache-type-v", "q4_0", "--jinja", "--reasoning-format", "deepseek", "--metrics", "--device", $deviceId) -join " "
 $proc = $null
 $labExit = 999
 try {
-  $proc = Start-Process -FilePath $server.FullName -ArgumentList $args -WorkingDirectory $server.DirectoryName -RedirectStandardOutput $serverOut -RedirectStandardError $serverErr -PassThru
+  $proc = Start-Process -FilePath $server.FullName -ArgumentList $serverArgsLine -WorkingDirectory $server.DirectoryName -RedirectStandardOutput $serverOut -RedirectStandardError $serverErr -PassThru
   $ready=$false
   for ($i=0; $i -lt 600; $i++) {
     if ($proc.HasExited) { throw "llama-server exited before healthy; inspect logs in $ev." }
